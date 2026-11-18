@@ -1,0 +1,39 @@
+{
+  "name": "gym_proyecto",
+  "version": "1.0.0",
+  "description": "Aplicación web para registrar socios con su nombre y correo electrónico.",
+  "scripts": {
+    "dev": "vite",
+    "build": "vite build",
+    "start": "node server/index.js",
+    "test": "npm run test:unit && npm run test:integration && npm run test:e2e",
+    "test:unit": "node --test tests/unit.test.js",
+    "test:integration": "node --test tests/integration.test.js",
+    "test:e2e": "npm run build && playwright test"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/perezcossioabdielperezcossio-create/PR-CTICA-3.2-PORTAFOLIO-PERSONAL.git"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "type": "module",
+  "bugs": {
+    "url": "https://github.com/perezcossioabdielperezcossio-create/PR-CTICA-3.2-PORTAFOLIO-PERSONAL/issues"
+  },
+  "homepage": "https://github.com/perezcossioabdielperezcossio-create/PR-CTICA-3.2-PORTAFOLIO-PERSONAL#readme",
+  "dependencies": {
+    "express": "^5.3.0",
+    "react": "^19.3.1",
+    "react-dom": "^19.3.1"
+  },
+  "devDependencies": {
+    "@playwright/test": "^1.65.1",
+    "vite": "^8.3.8"
+  },
+  "private": true,
+  "engines": {
+    "node": ">=24"
+  }
+}

@@ -1,0 +1,64 @@
+---
+- name: Instalar TigerVNC y una sesión gráfica ligera
+  ansible.builtin.apt:
+    name: [tigervnc-standalone-server, tigervnc-tools, xauth, xterm]
+    state: present
+
+- name: Crear directorio de configuración de TigerVNC
+  ansible.builtin.file:
+    path: /home/ubuntu/.config/tigervnc
+    state: directory
+    owner: ubuntu
+    group: ubuntu
+    mode: '0700'
+
+- name: Guardar contraseña de VNC
+  ansible.builtin.shell: |
+    set -eu
+    umask 077
+    cd /home/ubuntu/.config/tigervnc
+    tmp="$(mktemp)"
+    trap 'rm -f "$tmp"' EXIT
+    tigervncpasswd -f > "$tmp"
+    if ! cmp -s "$tmp" passwd; then
+      install -m 0600 -o ubuntu -g ubuntu "$tmp" passwd
+      printf 'updated\n'
+    fi
+  args:
+    stdin: "{{ vnc_password }}"
+  register: vnc_credentials
+  changed_when: "'updated' in vnc_credentials.stdout"
+  no_log: true
+
+- name: Configurar VNC en loopback
+  ansible.builtin.copy:
+    dest: /etc/systemd/system/gym-vnc.service
+    mode: '0644'
+    content: |
+      [Unit]
+      Description=Gym portfolio VNC
+      After=network.target
+
+      [Service]
+      User=ubuntu
+      WorkingDirectory=/home/ubuntu
+      ExecStart=/usr/bin/tigervncserver :1 -fg -localhost yes -SecurityTypes VncAuth -PasswordFile /home/ubuntu/.config/tigervnc/passwd -xstartup /usr/bin/xterm
+      Restart=on-failure
+      RestartSec=5
+
+      [Install]
+      WantedBy=multi-user.target
+  register: vnc_unit
+
+- name: Iniciar o actualizar VNC
+  ansible.builtin.systemd:
+    name: gym-vnc.service
+    daemon_reload: "{{ vnc_unit.changed }}"
+    enabled: true
+    state: "{{ 'restarted' if vnc_credentials.changed or vnc_unit.changed else 'started' }}"
+
+- name: Comprobar que VNC escucha en loopback
+  ansible.builtin.wait_for:
+    host: 127.0.0.1
+    port: 5901
+    timeout: 30

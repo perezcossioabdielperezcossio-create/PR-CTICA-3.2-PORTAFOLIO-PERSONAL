@@ -1,0 +1,171 @@
+name: Pruebas y despliegue
+
+on:
+  push:
+    branches: [dev, main]
+
+permissions:
+  contents: read
+
+jobs:
+  tests:
+    name: Unitarias, integración y E2E
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+          cache: npm
+      - run: npm ci
+      - run: npm run test:unit
+      - run: npm run test:integration
+      - run: npx playwright install --with-deps chromium
+      - run: npm run test:e2e
+
+  deploy:
+    name: Publicar en Docker Hub y desplegar en AWS
+    if: github.ref == 'refs/heads/main'
+    needs: tests
+    runs-on: ubuntu-24.04
+    timeout-minutes: 35
+    concurrency:
+      group: gym-portfolio-production
+      cancel-in-progress: false
+    permissions:
+      contents: read
+      id-token: write
+    env:
+      DOCKERHUB_USERNAME: ${{ vars.DOCKERHUB_USERNAME }}
+      DOCKERHUB_TOKEN: ${{ secrets.DOCKERHUB_TOKEN }}
+      IMAGE_REPOSITORY: ${{ vars.DOCKERHUB_USERNAME }}/gym-portfolio
+      TF_STATE_BUCKET: ${{ vars.TF_STATE_BUCKET }}
+      TF_VAR_ssh_public_key: ${{ secrets.EC2_SSH_PUBLIC_KEY }}
+      TF_VAR_admin_cidr: ${{ vars.ADMIN_CIDR }}
+      SITE_DOMAIN: ${{ vars.SITE_DOMAIN }}
+      VNC_PASSWORD: ${{ secrets.VNC_PASSWORD }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Comprobar configuración del repositorio
+        env:
+          SSH_PRIVATE_KEY: ${{ secrets.EC2_SSH_PRIVATE_KEY }}
+          AWS_ROLE_ARN: ${{ vars.AWS_ROLE_ARN }}
+          AWS_REGION: ${{ vars.AWS_REGION }}
+          CLOUDFLARE_ZONE_ID: ${{ vars.CLOUDFLARE_ZONE_ID }}
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+        run: |
+          set -euo pipefail
+          for name in DOCKERHUB_USERNAME DOCKERHUB_TOKEN TF_STATE_BUCKET TF_VAR_ssh_public_key SSH_PRIVATE_KEY AWS_ROLE_ARN AWS_REGION VNC_PASSWORD; do
+            if [[ -z "${!name}" ]]; then
+              echo "::error::Falta configurar $name"
+              exit 1
+            fi
+          done
+          if [[ ! "$DOCKERHUB_USERNAME" =~ ^[a-z0-9][a-z0-9_-]*$ || ! "$VNC_PASSWORD" =~ ^[[:graph:]]{6,8}$ ]]; then
+            echo "::error::Revisa el usuario de Docker Hub y la contraseña VNC de 6 a 8 caracteres ASCII sin espacios."
+            exit 1
+          fi
+          if [[ -n "$SITE_DOMAIN" ]]; then
+            if [[ ! "$SITE_DOMAIN" =~ ^[a-z0-9]([a-z0-9.-]*[a-z0-9])?\.[a-z]{2,}$ || -z "$CLOUDFLARE_ZONE_ID" || -z "$CLOUDFLARE_API_TOKEN" ]]; then
+              echo "::error::SITE_DOMAIN requiere un nombre DNS válido, CLOUDFLARE_ZONE_ID y CLOUDFLARE_API_TOKEN."
+              exit 1
+            fi
+          fi
+          install -d -m 700 "$HOME/.ssh"
+          umask 077
+          printf '%s\n' "$SSH_PRIVATE_KEY" | tr -d '\r' > "$HOME/.ssh/gym"
+          if [[ "$(ssh-keygen -y -P '' -f "$HOME/.ssh/gym" | awk '{print $1, $2}')" != "$(awk '{print $1, $2}' <<< "$TF_VAR_ssh_public_key")" ]]; then
+            echo "::error::Las llaves SSH deben corresponder y la privada debe estar disponible sin frase de paso."
+            exit 1
+          fi
+
+      - uses: docker/setup-buildx-action@v3
+      - uses: docker/login-action@v3
+        with:
+          username: ${{ vars.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
+      - uses: docker/build-push-action@v6
+        id: docker
+        with:
+          context: .
+          platforms: linux/amd64
+          push: true
+          tags: ${{ env.IMAGE_REPOSITORY }}:${{ github.sha }}
+
+      - uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ vars.AWS_ROLE_ARN }}
+          aws-region: ${{ vars.AWS_REGION }}
+
+      - uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: 1.14.0
+          terraform_wrapper: false
+
+      - name: Aprovisionar infraestructura
+        id: terraform
+        working-directory: infra/terraform
+        run: |
+          set -euo pipefail
+          terraform fmt -check
+          terraform init -input=false -backend-config="bucket=$TF_STATE_BUCKET"
+          terraform validate
+          terraform plan -input=false -out=production.tfplan
+          terraform apply -input=false production.tfplan
+          printf 'ip=%s\n' "$(terraform output -raw public_ip)" >> "$GITHUB_OUTPUT"
+          printf 'instance=%s\n' "$(terraform output -raw instance_id)" >> "$GITHUB_OUTPUT"
+
+      - name: Instalar Ansible y Session Manager
+        run: |
+          set -euo pipefail
+          pipx install 'ansible-core~=2.20.0'
+          if ! command -v session-manager-plugin >/dev/null; then
+            plugin="$RUNNER_TEMP/session-manager-plugin.deb"
+            curl -fsSL https://s3.amazonaws.com/session-manager-downloads/plugin/latest/ubuntu_64bit/session-manager-plugin.deb -o "$plugin"
+            sudo dpkg -i "$plugin"
+          fi
+          cat > "$HOME/.ssh/config" <<'EOF'
+          Host i-*
+            User ubuntu
+            IdentityFile ~/.ssh/gym
+            IdentitiesOnly yes
+            StrictHostKeyChecking accept-new
+            ProxyCommand aws ssm start-session --target %h --document-name AWS-StartSSHSession --parameters portNumber=%p
+          EOF
+
+      - name: Configurar DNS con Cloudflare
+        if: vars.SITE_DOMAIN != ''
+        env:
+          PUBLIC_IP: ${{ steps.terraform.outputs.ip }}
+          CLOUDFLARE_ZONE_ID: ${{ vars.CLOUDFLARE_ZONE_ID }}
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+        run: ansible-playbook -i localhost, infra/ansible/dns.yml
+
+      - name: Configurar Ubuntu y desplegar el contenedor
+        env:
+          INSTANCE_ID: ${{ steps.terraform.outputs.instance }}
+          APP_IMAGE: ${{ env.IMAGE_REPOSITORY }}@${{ steps.docker.outputs.digest }}
+          ADMIN_CIDR: ${{ vars.ADMIN_CIDR }}
+        run: |
+          set -euo pipefail
+          printf '[gym]\n%s ansible_user=ubuntu\n' "$INSTANCE_ID" > "$RUNNER_TEMP/gym.ini"
+          ansible-playbook -i "$RUNNER_TEMP/gym.ini" infra/ansible/site.yml
+
+      - name: Verificar la URL pública
+        env:
+          PUBLIC_IP: ${{ steps.terraform.outputs.ip }}
+        run: |
+          set -euo pipefail
+          url="http://$PUBLIC_IP"
+          if [[ -n "$SITE_DOMAIN" ]]; then
+            url="https://$SITE_DOMAIN"
+          fi
+          result="$(curl --fail --silent --show-error --retry 30 --retry-delay 10 --retry-all-errors --max-time 15 "$url/api/health")"
+          jq -e '.status == "ok"' <<< "$result"
+          printf 'Portafolio disponible en %s\n' "$url" >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Eliminar la llave del runner
+        if: always()
+        run: rm -f "$HOME/.ssh/gym"

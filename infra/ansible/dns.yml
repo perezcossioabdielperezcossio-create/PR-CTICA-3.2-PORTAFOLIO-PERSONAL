@@ -1,0 +1,66 @@
+---
+- name: Actualizar DNS en Cloudflare
+  hosts: localhost
+  connection: local
+  gather_facts: false
+  vars:
+    domain: "{{ lookup('ansible.builtin.env', 'SITE_DOMAIN') }}"
+    public_ip: "{{ lookup('ansible.builtin.env', 'PUBLIC_IP') }}"
+    zone_id: "{{ lookup('ansible.builtin.env', 'CLOUDFLARE_ZONE_ID') }}"
+    records_url: "https://api.cloudflare.com/client/v4/zones/{{ zone_id }}/dns_records"
+    managed_comment: "Managed by gym-portfolio GitHub Actions"
+    headers:
+      Authorization: "Bearer {{ lookup('ansible.builtin.env', 'CLOUDFLARE_API_TOKEN') }}"
+    record:
+      name: "{{ domain }}"
+      type: A
+      content: "{{ public_ip }}"
+      ttl: 300
+      proxied: false
+      comment: "{{ managed_comment }}"
+  tasks:
+    - name: Consultar registros existentes del subdominio
+      ansible.builtin.uri:
+        url: "{{ records_url }}?name.exact={{ domain | urlencode }}"
+        headers: "{{ headers }}"
+      register: existing
+      failed_when: not (existing.json.success | default(false))
+      no_log: true
+
+    - name: Identificar registros A
+      ansible.builtin.set_fact:
+        ipv4_records: "{{ existing.json.result | selectattr('type', 'equalto', 'A') | list }}"
+
+    - name: Validar que el nombre está disponible para el proyecto
+      ansible.builtin.assert:
+        that:
+          - ipv4_records | length <= 1
+          - existing.json.result | selectattr('type', 'in', ['AAAA', 'CNAME']) | list | length == 0
+          - not ipv4_records or ipv4_records[0].comment == managed_comment
+        fail_msg: El subdominio tiene registros de otra configuración. Elige un nombre disponible.
+
+    - name: Crear registro A
+      ansible.builtin.uri:
+        url: "{{ records_url }}"
+        method: POST
+        headers: "{{ headers }}"
+        body_format: json
+        body: "{{ record }}"
+      register: creation
+      failed_when: not (creation.json.success | default(false))
+      changed_when: true
+      when: not ipv4_records
+      no_log: true
+
+    - name: Actualizar registro A
+      ansible.builtin.uri:
+        url: "{{ records_url }}/{{ ipv4_records[0].id }}"
+        method: PUT
+        headers: "{{ headers }}"
+        body_format: json
+        body: "{{ record }}"
+      register: update
+      failed_when: not (update.json.success | default(false))
+      changed_when: true
+      when: ipv4_records and (ipv4_records[0].content != public_ip or ipv4_records[0].proxied or ipv4_records[0].ttl != record.ttl)
+      no_log: true
