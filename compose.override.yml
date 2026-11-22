@@ -1,3 +1,4 @@
 services:
   app:
+    # En local, construye la imagen usando el Dockerfile del proyecto.
     build: .

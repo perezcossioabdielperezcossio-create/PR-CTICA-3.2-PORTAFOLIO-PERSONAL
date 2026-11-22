@@ -1,0 +1,82 @@
+[
+  {
+    "name": "María Pérez",
+    "email": "maria.perez@example.com"
+  },
+  {
+    "name": "Ana Rojas",
+    "email": "ana.rojas@example.com"
+  },
+  {
+    "name": "Bruno Vargas",
+    "email": "bruno.vargas@example.com"
+  },
+  {
+    "name": "Camila Flores",
+    "email": "camila.flores@example.com"
+  },
+  {
+    "name": "Diego Quispe",
+    "email": "diego.quispe@example.com"
+  },
+  {
+    "name": "Elena Morales",
+    "email": "elena.morales@example.com"
+  },
+  {
+    "name": "Fabio Cruz",
+    "email": "fabio.cruz@example.com"
+  },
+  {
+    "name": "Gabriela Soto",
+    "email": "gabriela.soto@example.com"
+  },
+  {
+    "name": "Hugo Salazar",
+    "email": "hugo.salazar@example.com"
+  },
+  {
+    "name": "Inés Medina",
+    "email": "ines.medina@example.com"
+  },
+  {
+    "name": "Javier Arias",
+    "email": "javier.arias@example.com"
+  },
+  {
+    "name": "Karla Romero",
+    "email": "karla.romero@example.com"
+  },
+  {
+    "name": "Luis Vega",
+    "email": "luis.vega@example.com"
+  },
+  {
+    "name": "Mónica Lima",
+    "email": "monica.lima@example.com"
+  },
+  {
+    "name": "Nicolás Suárez",
+    "email": "nicolas.suarez@example.com"
+  },
+  {
+    "name": "Olga Ramos",
+    "email": "olga.ramos@example.com"
+  },
+  {
+    "name": "Pablo Aguilar",
+    "email": "pablo.aguilar@example.com"
+  },
+  {
+    "name": "Renata Castro",
+    "email": "renata.castro@example.com"
+  },
+  {
+    "name": "Sergio Paredes",
+    "email": "sergio.paredes@example.com"
+  },
+  {
+    "name": "Valeria Núñez",
+    "email": "valeria.nunez@example.com"
+  }
+]

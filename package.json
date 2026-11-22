@@ -6,10 +6,11 @@
     "dev": "vite",
     "build": "vite build",
     "start": "node server/index.js",
+    "start:local": "node --env-file-if-exists=.env.local server/index.js --local",
     "test": "npm run build && cypress run",
-    "test:unit": "cypress run --spec cypress/e2e/unit.cy.js",
-    "test:integration": "cypress run --spec cypress/e2e/integration.cy.js",
-    "test:e2e": "npm run build && cypress run --spec cypress/e2e/registration.cy.js"
+    "test:unit": "cypress run --spec cypress/e2e/unit.cy.js,cypress/e2e/register-member.cy.js,cypress/e2e/list-members.cy.js",
+    "test:integration": "cypress run --spec cypress/e2e/integration.cy.js,cypress/e2e/account-integration.cy.js",
+    "test:e2e": "npm run build && cypress run --spec cypress/e2e/registration.cy.js,cypress/e2e/account.cy.js"
   },
   "repository": {
     "type": "git",

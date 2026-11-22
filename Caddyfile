@@ -1,3 +1,4 @@
 {$SITE_ADDRESS} {
+    # Envía las solicitudes al servicio app por la red interna de Compose.
     reverse_proxy app:3000
 }

@@ -38,3 +38,36 @@ button:disabled { opacity: .65; cursor: wait; }
   .shell { width: calc(100% - 32px); }
   .project { grid-template-columns: 1fr; }
 }
+
+.back-button { margin-top: 12px; background: transparent; border: 1px solid var(--line); }
+.attendance-panel { padding: clamp(24px, 5vw, 58px); background: #f6f5ec; color: #171b13; }
+.attendance-form { display: grid; gap: 10px; padding: 18px 0 0; }
+.attendance-days { list-style: none; padding: 0; margin: 20px 0; }
+.attendance-days li { padding: 12px 0; border-top: 1px solid #c4cab9; overflow-wrap: anywhere; }
+.attendance-panel > .muted { margin-bottom: 0; }
+.description { overflow-wrap: anywhere; }
+.description > p { line-height: 1.55; }
+
+.nav-button { background: transparent; border: 1px solid var(--line); }
+.members-board { margin-block: clamp(32px, 8vw, 96px); border: 1px solid var(--line); border-radius: 22px; overflow: hidden; }
+.members-heading { padding: clamp(24px, 5vw, 48px); background: #232922; }
+.members-heading p, .members-content > p { margin-bottom: 0; }
+.members-content { padding: clamp(20px, 4vw, 40px); background: #f6f5ec; color: #171b13; }
+.members-content > .error { margin: 0 0 12px; }
+.members-table { overflow-x: auto; }
+.members-table table { width: 100%; border-collapse: collapse; text-align: left; }
+.members-table th, .members-table td { padding: 14px; border-bottom: 1px solid #c4cab9; }
+.members-table th { color: #505748; }
+.members-table td:first-child { font-weight: 650; }
+.members-table td:last-child { white-space: nowrap; }
+
+.members-search { padding: 0; margin-bottom: 24px; }
+.members-search-fields { display: flex; flex-wrap: wrap; gap: 10px; margin-top: 8px; }
+.members-search-fields input { flex: 1 1 200px; width: auto; min-width: 0; margin: 0; }
+
+.account-nav { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 8px; }
+.account-grid { display: grid; gap: 24px; grid-template-columns: repeat(auto-fit, minmax(min(100%, 280px), 1fr)); }
+.account-form { padding: 14px 0; overflow-wrap: anywhere; }
+.account-form textarea { display: block; width: 100%; padding: 12px; font: inherit; border: 1px solid #a3ab97; border-radius: 8px; }
+.account-form input { margin-top: 6px; }
+.account-form p, .account-form ul { margin-bottom: 8px; }

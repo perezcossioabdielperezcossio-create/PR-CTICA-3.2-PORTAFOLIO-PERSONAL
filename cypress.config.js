@@ -15,6 +15,7 @@ export default defineConfig({
       const database = join(directory, 'gym.sqlite')
       const { app, close } = createApp({
         database,
+        adminKey: 'cypress-admin-key-only',
         assets: fileURLToPath(new URL('./dist/', import.meta.url))
       })
       const testDatabase = new DatabaseSync(database)

@@ -1,24 +1,20 @@
 import React, { useState } from 'react'
 import { registerMember } from './members-api.js'
 
-export function RegistrationForm() {
+export function RegistrationForm({ onRegistered }) {
   const [pending, setPending] = useState(false)
-  const [feedback, setFeedback] = useState(null)
+  const [errorMessage, setErrorMessage] = useState(null)
 
   async function handleSubmit(event) {
     event.preventDefault()
     const form = event.currentTarget
     setPending(true)
-    setFeedback(null)
+    setErrorMessage(null)
     try {
       const result = await registerMember(Object.fromEntries(new FormData(form)))
-      form.reset()
-      setFeedback({ type: 'success', message: result.message })
+      onRegistered(result)
     } catch (error) {
-      setFeedback({
-        type: 'error',
-        message: error instanceof TypeError ? 'No pudimos conectar. Inténtalo de nuevo.' : error.message
-      })
+      setErrorMessage(error instanceof TypeError ? 'No pudimos conectar. Inténtalo de nuevo.' : error.message)
     } finally {
       setPending(false)
     }
@@ -35,7 +31,7 @@ export function RegistrationForm() {
         <input id="email" name="email" type="email" autoComplete="email" placeholder="alex@example.com" required maxLength={254} />
         <button>{pending ? 'Registrando…' : 'Registrar socio'}</button>
       </fieldset>
-      {feedback && <p className={feedback.type} role={feedback.type === 'error' ? 'alert' : 'status'}>{feedback.message}</p>}
+      {errorMessage && <p className="error" role="alert">{errorMessage}</p>}
     </form>
   )
 }

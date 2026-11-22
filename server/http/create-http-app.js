@@ -1,20 +1,29 @@
 import express from 'express'
 
-export function createHttpApp({ registerMember, checkHealth, assets }) {
+export function createHttpApp({ accountRoutes, registerMember, listMembers, checkHealth, assets }) {
   const app = express()
   app.disable('x-powered-by')
   app.use(express.json({ limit: '8kb' }))
+  app.use('/api/account', accountRoutes)
 
   app.get('/api/health', (_req, res) => {
     checkHealth()
     res.json({ status: 'ok' })
   })
 
+  app.get('/api/members', (req, res) => {
+    const { q = '' } = req.query
+    if (typeof q !== 'string' || q.length > 254) {
+      return res.status(400).json({ error: 'La búsqueda debe ser un texto de hasta 254 caracteres.' })
+    }
+    res.set('Cache-Control', 'no-store').json({ members: listMembers(q) })
+  })
+
   app.post('/api/members', (req, res) => {
     const result = registerMember(req.body)
     if (result.status === 'invalid') return res.status(400).json({ error: result.error })
     if (result.status === 'duplicate') return res.status(409).json({ error: 'Este correo ya está registrado.' })
-    res.status(201).json({ message: 'Socio registrado correctamente.' })
+    res.status(201).json({ message: 'Socio registrado correctamente.', member: result.member })
   })
 
   if (assets) app.use(express.static(assets))

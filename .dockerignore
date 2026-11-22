@@ -8,3 +8,4 @@ cypress
 cypress.config.js
 scripts
 .env
+.env.local

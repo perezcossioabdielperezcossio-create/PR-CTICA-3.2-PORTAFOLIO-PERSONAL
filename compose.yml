@@ -1,8 +1,12 @@
 services:
   app:
+    # APP_IMAGE permite elegir la imagen publicada para el despliegue.
     image: ${APP_IMAGE:-gym-portfolio:local}
+    environment:
+      GYM_ADMIN_KEY: ${GYM_ADMIN_KEY:-}
     restart: unless-stopped
     volumes:
+      # SQLite queda en un volumen que perdura al reemplazar el contenedor.
       - gym-data:/app/data
     healthcheck:
       test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:3000/api/health').then(r => { if (!r.ok) process.exit(1) }).catch(() => process.exit(1))"]
@@ -17,6 +21,7 @@ services:
     restart: unless-stopped
     environment:
       SITE_ADDRESS: ${SITE_ADDRESS:-:80}
+    # Caddy recibe el tráfico web. Express escucha en la red interna de Compose.
     ports:
       - "80:80"
       - "443:443"
@@ -24,6 +29,7 @@ services:
       - ./Caddyfile:/etc/caddy/Caddyfile:ro
       - caddy-data:/data
       - caddy-config:/config
+    # Espera a que la API responda a la comprobación de salud.
     depends_on:
       app:
         condition: service_healthy
