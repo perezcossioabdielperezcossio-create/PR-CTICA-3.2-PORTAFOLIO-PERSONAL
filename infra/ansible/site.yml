@@ -1,14 +1,19 @@
 ---
 - name: Configurar y desplegar el portafolio
+  # El inventario indica a qué VM del grupo gym se conecta Ansible.
   hosts: gym
   become: true
   gather_facts: false
+  # El controlador proporciona los valores de despliegue mediante variables de entorno.
   vars:
-    project_directory: /opt/gym-portfolio
+    project_directory: "{{ lookup('ansible.builtin.env', 'GYM_PROJECT_DIR') | default('/opt/gym-portfolio', true) }}"
     source_directory: "{{ playbook_dir }}/../.."
     domain: "{{ lookup('ansible.builtin.env', 'SITE_DOMAIN') }}"
     vnc_password: "{{ lookup('ansible.builtin.env', 'VNC_PASSWORD') }}"
+    # En CI, las IPv4 autorizadas se filtran en el NSG de OCI.
+    ssh_filter_at_oci: "{{ lookup('ansible.builtin.env', 'GYM_SSH_FILTER_AT_OCI') | bool }}"
     admin_cidr: "{{ lookup('ansible.builtin.env', 'ADMIN_CIDR') }}"
+  # Espera a SSH y a cloud-init para evitar instalar paquetes durante el arranque.
   pre_tasks:
     - name: Esperar el inicio del servidor
       ansible.builtin.wait_for_connection:
@@ -26,6 +31,7 @@
         that:
           - lookup('ansible.builtin.env', 'APP_IMAGE') is match('^[a-z0-9._/-]+@sha256:[0-9a-f]{64}$')
           - domain == '' or domain is match('^[a-z0-9]([a-z0-9.-]*[a-z0-9])?$')
+          - admin_cidr is match('^[0-9]+[.][0-9]+[.][0-9]+[.][0-9]+/32$')
           - vnc_password | length >= 6 and vnc_password | length <= 8
       no_log: true
 
@@ -37,6 +43,7 @@
         update_cache: true
         cache_valid_time: 3600
 
+    # La clave de firma permite a APT verificar los paquetes del repositorio de Docker.
     - name: Crear directorio de llaves APT
       ansible.builtin.file:
         path: /etc/apt/keyrings
@@ -49,15 +56,24 @@
         dest: /etc/apt/keyrings/docker.asc
         mode: '0644'
 
+    # Usa el mismo archivo APT que instalamos en Ubuntu para evitar entradas duplicadas.
     - name: Configurar repositorio de Docker para Ubuntu 24.04
-      ansible.builtin.apt_repository:
-        repo: deb [arch=amd64 signed-by=/etc/apt/keyrings/docker.asc] https://download.docker.com/linux/ubuntu noble stable
-        filename: docker
-        state: present
+      ansible.builtin.copy:
+        dest: /etc/apt/sources.list.d/docker.sources
+        mode: '0644'
+        content: |
+          Types: deb
+          URIs: https://download.docker.com/linux/ubuntu
+          Suites: noble
+          Components: stable
+          Architectures: amd64
+          Signed-By: /etc/apt/keyrings/docker.asc
+      register: docker_repository
 
     - name: Instalar Docker Engine y Compose
       ansible.builtin.apt:
         name: [docker-ce, docker-ce-cli, containerd.io, docker-compose-plugin]
+        update_cache: "{{ docker_repository.changed }}"
         state: present
 
     - name: Habilitar Docker y conservar su gestión de iptables
@@ -66,17 +82,25 @@
         enabled: true
         state: started
 
+    # Configura UFW en el host. Docker administra las reglas de sus puertos publicados.
     - name: Permitir HTTP y HTTPS en UFW
       ansible.builtin.command: "ufw allow {{ item }}/tcp"
       loop: [80, 443]
       register: ufw_web
       changed_when: "'Skipping' not in ufw_web.stdout"
 
+    # Autoriza la red administrativa antes de activar el firewall.
     - name: Permitir SSH directo desde la red administrativa
       ansible.builtin.command: "ufw allow from {{ admin_cidr }} to any port 22 proto tcp"
       register: ufw_ssh
       changed_when: "'Skipping' not in ufw_ssh.stdout"
       when: admin_cidr | length > 0
+
+    - name: Permitir SSH en Ubuntu cuando OCI filtra las IPv4
+      ansible.builtin.command: ufw allow 22/tcp
+      register: ufw_ci_ssh
+      changed_when: "'Skipping' not in ufw_ci_ssh.stdout"
+      when: ssh_filter_at_oci
 
     - name: Denegar conexiones entrantes por defecto
       ansible.builtin.command: ufw default deny incoming
@@ -99,53 +123,36 @@
         mode: '0644'
       loop: [compose.yml, Caddyfile]
 
-    - name: Guardar la referencia inmutable de la imagen
-      ansible.builtin.copy:
-        dest: "{{ project_directory }}/.env"
-        content: |
-          APP_IMAGE={{ lookup('ansible.builtin.env', 'APP_IMAGE') }}
-          SITE_ADDRESS={{ domain | default(':80', true) }}
-          CADDY_CONFIG_HASH={{ lookup('ansible.builtin.file', source_directory ~ '/Caddyfile') | hash('sha256') }}
-        mode: '0644'
+    # Actualiza solo las variables del despliegue y conserva la clave de Administración.
+    - name: Actualizar configuración de Compose
+      ansible.builtin.lineinfile:
+        path: "{{ project_directory }}/.env"
+        regexp: '^{{ item.key }}='
+        line: '{{ item.key }}={{ item.value }}'
+        create: true
+        owner: ubuntu
+        group: ubuntu
+        mode: '0600'
+      loop:
+        - {key: APP_IMAGE, value: "{{ lookup('ansible.builtin.env', 'APP_IMAGE') }}"}
+        - {key: SITE_ADDRESS, value: "{{ domain | default(':80', true) }}"}
+        - {key: CADDY_CONFIG_HASH, value: "{{ lookup('ansible.builtin.file', source_directory ~ '/Caddyfile') | hash('sha256') }}"}
+      diff: false
 
-    - name: Crear credenciales temporales para descargar desde Docker Hub
-      ansible.builtin.tempfile:
-        state: directory
-      register: docker_config
+    # La imagen de Docker Hub es pública. Compose usa el digest guardado en .env.
+    - name: Descargar imágenes publicadas
+      ansible.builtin.command: docker compose pull
+      args:
+        chdir: "{{ project_directory }}"
+      changed_when: false
 
-    - name: Descargar y desplegar
-      environment:
-        DOCKER_CONFIG: "{{ docker_config.path }}"
-      block:
-        - name: Autenticar Docker Hub
-          ansible.builtin.command:
-            argv:
-              - docker
-              - login
-              - --username
-              - "{{ lookup('ansible.builtin.env', 'DOCKERHUB_USERNAME') }}"
-              - --password-stdin
-            stdin: "{{ lookup('ansible.builtin.env', 'DOCKERHUB_TOKEN') }}"
-          no_log: true
-          changed_when: false
+    - name: Levantar servicios y esperar disponibilidad
+      ansible.builtin.command: docker compose up -d --no-build --wait --wait-timeout 120
+      args:
+        chdir: "{{ project_directory }}"
+      register: compose_up
+      changed_when: "'Created' in compose_up.stderr or 'Started' in compose_up.stderr or 'Recreated' in compose_up.stderr"
 
-        - name: Descargar imágenes
-          ansible.builtin.command: docker compose pull
-          args:
-            chdir: "{{ project_directory }}"
-          changed_when: false
-
-        - name: Levantar servicios y esperar disponibilidad
-          ansible.builtin.command: docker compose up -d --no-build --wait --wait-timeout 120
-          args:
-            chdir: "{{ project_directory }}"
-          register: compose_up
-          changed_when: "'Created' in compose_up.stderr or 'Started' in compose_up.stderr"
-      always:
-        - name: Borrar credenciales temporales
-          ansible.builtin.file:
-            path: "{{ docker_config.path }}"
-            state: absent
-
+    # VNC usa la misma VM y se verifica al finalizar la configuración.
     - name: Instalar y habilitar VNC
       ansible.builtin.include_tasks: vnc.yml

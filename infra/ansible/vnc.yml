@@ -12,6 +12,7 @@
     group: ubuntu
     mode: '0700'
 
+# Solo reemplaza el archivo de contraseña si cambia su contenido.
 - name: Guardar contraseña de VNC
   ansible.builtin.shell: |
     set -eu
@@ -30,6 +31,7 @@
   changed_when: "'updated' in vnc_credentials.stdout"
   no_log: true
 
+# Limita TigerVNC al equipo remoto. El operador accede mediante un túnel SSH.
 - name: Configurar VNC en loopback
   ansible.builtin.copy:
     dest: /etc/systemd/system/gym-vnc.service
@@ -50,6 +52,7 @@
       WantedBy=multi-user.target
   register: vnc_unit
 
+# Reinicia el servicio solo si cambió su unidad o su contraseña.
 - name: Iniciar o actualizar VNC
   ansible.builtin.systemd:
     name: gym-vnc.service

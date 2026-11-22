@@ -1,8 +1,9 @@
-name: Pruebas del gimnasio
+name: Pruebas y despliegue del gimnasio
 
 on:
   push:
-    branches: [dev]
+    branches: [dev, main]
+  workflow_dispatch:
 
 permissions:
   contents: read
@@ -23,3 +24,61 @@ jobs:
           python-version: '3.12'
       - run: npm ci
       - run: python scripts/run_tests.py
+
+  deploy:
+    name: Publicar y desplegar en OCI
+    needs: tests
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 35
+    environment: production
+    concurrency:
+      group: gym-portfolio-production
+      cancel-in-progress: false
+    env:
+      OCI_STATE_BUCKET: ${{ vars.OCI_STATE_BUCKET }}
+      OCI_STATE_NAMESPACE: ${{ vars.OCI_STATE_NAMESPACE }}
+      OCI_TFVARS_JSON: ${{ secrets.OCI_TFVARS_JSON }}
+      OCI_API_PRIVATE_KEY: ${{ secrets.OCI_API_PRIVATE_KEY }}
+      GYM_VM_SSH_PUBLIC_KEY: ${{ vars.GYM_VM_SSH_PUBLIC_KEY }}
+      GYM_DEPLOY_SSH_KEY: ${{ secrets.GYM_DEPLOY_SSH_KEY }}
+      GYM_SSH_KNOWN_HOSTS: ${{ secrets.GYM_SSH_KNOWN_HOSTS }}
+      VNC_PASSWORD: ${{ secrets.VNC_PASSWORD }}
+      SITE_DOMAIN: ${{ vars.SITE_DOMAIN }}
+      GYM_PROJECT_DIR: /home/ubuntu/gym-portfolio
+      OCI_CLI_SUPPRESS_FILE_PERMISSIONS_WARNING: 'True'
+    steps:
+      - uses: actions/checkout@v4
+      - uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: '1.14.4'
+          terraform_wrapper: false
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Instalar Ansible y OCI CLI
+        run: python -m pip install 'ansible-core~=2.20.0' 'oci-cli~=3.0'
+      - name: Revisar la infraestructura existente
+        run: bash scripts/deploy-oci.sh plan
+
+      - uses: docker/setup-buildx-action@v3
+      - uses: docker/login-action@v3
+        with:
+          username: abdielperez
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
+      - uses: docker/build-push-action@v6
+        id: image
+        with:
+          context: .
+          platforms: linux/amd64
+          push: true
+          tags: abdielperez/gympersonal:${{ github.sha }}
+
+      - name: Aplicar el plan y ejecutar Ansible
+        env:
+          APP_IMAGE: abdielperez/gympersonal@${{ steps.image.outputs.digest }}
+        run: bash scripts/deploy-oci.sh apply
+
+      - name: Quitar el acceso SSH temporal
+        if: always()
+        run: bash scripts/deploy-oci.sh cleanup

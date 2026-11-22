@@ -1,6 +1,7 @@
 ---
 - name: Actualizar DNS en Cloudflare
   hosts: localhost
+  # Las solicitudes a Cloudflare salen del equipo que ejecuta Ansible.
   connection: local
   gather_facts: false
   vars:
@@ -31,6 +32,7 @@
       ansible.builtin.set_fact:
         ipv4_records: "{{ existing.json.result | selectattr('type', 'equalto', 'A') | list }}"
 
+    # Evita sobrescribir registros que pertenecen a otra configuración.
     - name: Validar que el nombre está disponible para el proyecto
       ansible.builtin.assert:
         that:

@@ -10,3 +10,4 @@ cypress/screenshots/
 cypress/videos/
 *.tfvars
 *.tfvars.json
+infra/oci/backend.tf

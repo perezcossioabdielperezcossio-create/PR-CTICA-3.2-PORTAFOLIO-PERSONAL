@@ -1,0 +1,17 @@
+tenancy_ocid           = ""
+user_ocid              = ""
+fingerprint            = ""
+private_key_path       = ""
+region                 = ""
+compartment_ocid       = ""
+availability_domain    = ""
+ubuntu_2404_image_ocid = ""
+ssh_public_key_path    = ""
+shape                  = ""
+admin_cidr             = ""
+
+# Solo para formas Flex.
+# flex_shape = { ocpus = 1, memory_in_gbs = 4 }
+
+# Opcional para reutilizar una subred pública.
+# subnet_ocid = ""
