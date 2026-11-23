@@ -11,7 +11,8 @@ state_key=gym-portfolio/production.tfstate
 deployment_id=
 # Una ejecución manual nueva tiene estado propio. Un reintento conserva su VM.
 if [[ "${GITHUB_EVENT_NAME:-}" == workflow_dispatch ]]; then
-  deployment_id="${GITHUB_RUN_ID:?}"
+  deployment_id="${RESUME_RUN_ID:-${GITHUB_RUN_ID:?}}"
+  [[ "$deployment_id" =~ ^[0-9]+$ ]] || { echo 'ID de ejecución inválido' >&2; exit 1; }
   state_key="gym-portfolio/manual/$deployment_id.tfstate"
 fi
 
@@ -61,8 +62,8 @@ plan() {
     "-backend-config=private_key_path=$tmp/api.pem"
 
   # Solo el aprovisionamiento manual puede comenzar con un estado vacío.
-  if [[ -z "$deployment_id" ]] && ! "${tf[@]}" state list | grep -Fx 'oci_core_instance.gym'; then
-    printf 'Falta migrar al bucket el estado de la VM existente.\n' >&2
+  if [[ -z "$deployment_id" || -n "${RESUME_RUN_ID:-}" ]] && ! "${tf[@]}" state list | grep -Fx 'oci_core_instance.gym'; then
+    printf 'El estado seleccionado debe contener la VM existente.\n' >&2
     return 1
   fi
   "${tf[@]}" plan -input=false -var-file="$tmp/production.tfvars.json" -out="$tmp/gym.tfplan"
@@ -85,7 +86,17 @@ pin_new_host() {
     done
     if [[ "$state" == SUCCEEDED ]]; then
       rm -f "$tmp/console"
-      "${oci_cmd[@]}" compute console-history get-content --instance-console-history-id "$capture" --file "$tmp/console" >/dev/null
+      # OCI entrega solo los primeros 10 KiB por defecto. La clave aparece al final del arranque.
+      python - "$tmp/oci-config" "$capture" "$tmp/console" <<'PY'
+import sys
+from pathlib import Path
+import oci
+
+config, capture, destination = sys.argv[1:]
+client = oci.core.ComputeClient(oci.config.from_file(config))
+content = client.get_console_history_content(capture, offset=0, length=1048576)
+Path(destination).write_bytes(content.data)
+PY
       key=$(sed -nE 's/^GYM_OCI_HOST_KEY (ssh-ed25519 [A-Za-z0-9+\/=]+).*/\1/p' "$tmp/console" | tail -n 1)
     fi
     "${oci_cmd[@]}" compute console-history delete --instance-console-history-id "$capture" --force >/dev/null

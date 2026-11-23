@@ -4,6 +4,11 @@ on:
   push:
     branches: [main]
   workflow_dispatch:
+    inputs:
+      resume_run_id:
+        description: "Opcional: ID de la ejecución manual cuya VM quieres terminar de configurar"
+        type: string
+        required: false
 
 permissions:
   contents: read
@@ -19,6 +24,7 @@ jobs:
       group: gym-portfolio-production
       cancel-in-progress: false
     env:
+      RESUME_RUN_ID: ${{ inputs.resume_run_id }}
       OCI_STATE_BUCKET: ${{ vars.OCI_STATE_BUCKET }}
       OCI_STATE_NAMESPACE: ${{ vars.OCI_STATE_NAMESPACE }}
       OCI_TFVARS_JSON: ${{ secrets.OCI_TFVARS_JSON }}
