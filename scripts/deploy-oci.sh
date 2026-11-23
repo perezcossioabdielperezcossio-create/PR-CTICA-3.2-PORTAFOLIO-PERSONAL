@@ -36,12 +36,12 @@ plan() {
   printf '%s\n' "${GYM_SSH_KNOWN_HOSTS:-}" | tr -d '\r' > "$tmp/known_hosts"
   local deploy_public_key
   deploy_public_key=$(ssh-keygen -y -P '' -f "$tmp/ssh")
-  # La clave original permite al usuario acceder. La VM nueva autoriza también a Ansible.
-  printf '%s\n' "$GYM_VM_SSH_PUBLIC_KEY" | tr -d '\r' > "$tmp/ssh.pub"
-  ssh-keygen -l -f "$tmp/ssh.pub" >/dev/null
+  # OpenSSH asocia ssh.pub con ssh. La clave del administrador va en otro archivo.
+  printf '%s\n' "$GYM_VM_SSH_PUBLIC_KEY" | tr -d '\r' > "$tmp/vm-access.pub"
+  ssh-keygen -l -f "$tmp/vm-access.pub" >/dev/null
 
   # Las claves se escriben en el directorio temporal del runner.
-  jq --arg api "$tmp/api.pem" --arg ssh "$tmp/ssh.pub" --arg id "$deployment_id" --arg deploy "$deploy_public_key" '
+  jq --arg api "$tmp/api.pem" --arg ssh "$tmp/vm-access.pub" --arg id "$deployment_id" --arg deploy "$deploy_public_key" '
     . + {private_key_path: $api, ssh_public_key_path: $ssh, deployment_id: null, deploy_ssh_public_key: null}
     | if $id == "" then . else . + {deployment_id: $id, deploy_ssh_public_key: $deploy, subnet_ocid: null} end
   ' <<< "$OCI_TFVARS_JSON" > "$tmp/production.tfvars.json"
