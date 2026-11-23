@@ -7,9 +7,19 @@ rule_description="gym-actions-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
 tmp="${RUNNER_TEMP:?}/gym-deploy"
 oci_cmd=(oci --config-file "$tmp/oci-config")
 
+state_key=gym-portfolio/production.tfstate
+deployment_id=
+# Una ejecución manual nueva tiene estado propio. Un reintento conserva su VM.
+if [[ "${GITHUB_EVENT_NAME:-}" == workflow_dispatch ]]; then
+  deployment_id="${GITHUB_RUN_ID:?}"
+  state_key="gym-portfolio/manual/$deployment_id.tfstate"
+fi
+
 plan() {
   umask 077
-  for name in OCI_STATE_BUCKET OCI_STATE_NAMESPACE OCI_TFVARS_JSON OCI_API_PRIVATE_KEY GYM_VM_SSH_PUBLIC_KEY GYM_DEPLOY_SSH_KEY GYM_SSH_KNOWN_HOSTS VNC_PASSWORD; do
+  local -a required=(OCI_STATE_BUCKET OCI_STATE_NAMESPACE OCI_TFVARS_JSON OCI_API_PRIVATE_KEY GYM_VM_SSH_PUBLIC_KEY GYM_DEPLOY_SSH_KEY VNC_PASSWORD)
+  if [[ -z "$deployment_id" ]]; then required+=(GYM_SSH_KNOWN_HOSTS); fi
+  for name in "${required[@]}"; do
     if [[ -z "${!name}" ]]; then
       printf 'Falta configurar %s en el entorno production.\n' "$name" >&2
       return 1
@@ -23,15 +33,18 @@ plan() {
   mkdir -p "$tmp"
   printf '%s\n' "$OCI_API_PRIVATE_KEY" | tr -d '\r' > "$tmp/api.pem"
   printf '%s\n' "$GYM_DEPLOY_SSH_KEY" | tr -d '\r' > "$tmp/ssh"
-  printf '%s\n' "$GYM_SSH_KNOWN_HOSTS" | tr -d '\r' > "$tmp/known_hosts"
-  ssh-keygen -y -P '' -f "$tmp/ssh" >/dev/null
-  # Conserva en Terraform la llave pública original de la VM. Ansible usa otra llave.
+  printf '%s\n' "${GYM_SSH_KNOWN_HOSTS:-}" | tr -d '\r' > "$tmp/known_hosts"
+  local deploy_public_key
+  deploy_public_key=$(ssh-keygen -y -P '' -f "$tmp/ssh")
+  # La clave original permite al usuario acceder. La VM nueva autoriza también a Ansible.
   printf '%s\n' "$GYM_VM_SSH_PUBLIC_KEY" | tr -d '\r' > "$tmp/ssh.pub"
   ssh-keygen -l -f "$tmp/ssh.pub" >/dev/null
 
   # Las claves se escriben en el directorio temporal del runner.
-  jq --arg api "$tmp/api.pem" --arg ssh "$tmp/ssh.pub" \
-    '. + {private_key_path: $api, ssh_public_key_path: $ssh}' <<< "$OCI_TFVARS_JSON" > "$tmp/production.tfvars.json"
+  jq --arg api "$tmp/api.pem" --arg ssh "$tmp/ssh.pub" --arg id "$deployment_id" --arg deploy "$deploy_public_key" '
+    . + {private_key_path: $api, ssh_public_key_path: $ssh, deployment_id: null, deploy_ssh_public_key: null}
+    | if $id == "" then . else . + {deployment_id: $id, deploy_ssh_public_key: $deploy, subnet_ocid: null} end
+  ' <<< "$OCI_TFVARS_JSON" > "$tmp/production.tfvars.json"
   jq -er --arg key "$tmp/api.pem" '
     "[DEFAULT]\ntenancy=\(.tenancy_ocid)\nuser=\(.user_ocid)\nfingerprint=\(.fingerprint)\nregion=\(.region)\nkey_file=\($key)"
   ' "$tmp/production.tfvars.json" > "$tmp/oci-config"
@@ -41,14 +54,14 @@ plan() {
     "-backend-config=bucket=$OCI_STATE_BUCKET" \
     "-backend-config=namespace=$OCI_STATE_NAMESPACE" \
     "-backend-config=region=$(jq -er '.region' "$tmp/production.tfvars.json")" \
-    "-backend-config=key=gym-portfolio/production.tfstate" \
+    "-backend-config=key=$state_key" \
     "-backend-config=tenancy_ocid=$(jq -er '.tenancy_ocid' "$tmp/production.tfvars.json")" \
     "-backend-config=user_ocid=$(jq -er '.user_ocid' "$tmp/production.tfvars.json")" \
     "-backend-config=fingerprint=$(jq -er '.fingerprint' "$tmp/production.tfvars.json")" \
     "-backend-config=private_key_path=$tmp/api.pem"
 
-  # Un estado vacío haría que Terraform intentara duplicar la infraestructura.
-  if ! "${tf[@]}" state list | grep -Fx 'oci_core_instance.gym'; then
+  # Solo el aprovisionamiento manual puede comenzar con un estado vacío.
+  if [[ -z "$deployment_id" ]] && ! "${tf[@]}" state list | grep -Fx 'oci_core_instance.gym'; then
     printf 'Falta migrar al bucket el estado de la VM existente.\n' >&2
     return 1
   fi
@@ -60,11 +73,43 @@ plan() {
   fi
 }
 
+# Lee la clave pública desde la consola autenticada de la instancia creada en OCI.
+pin_new_host() {
+  local ip=$1 instance=$2 capture state key
+  for attempt in {1..12}; do
+    capture=$("${oci_cmd[@]}" compute console-history capture --instance-id "$instance" --query data.id --raw-output)
+    for poll in {1..6}; do
+      state=$("${oci_cmd[@]}" compute console-history get --instance-console-history-id "$capture" --query 'data."lifecycle-state"' --raw-output)
+      [[ "$state" == SUCCEEDED || "$state" == FAILED ]] && break
+      sleep 3
+    done
+    if [[ "$state" == SUCCEEDED ]]; then
+      rm -f "$tmp/console"
+      "${oci_cmd[@]}" compute console-history get-content --instance-console-history-id "$capture" --file "$tmp/console" >/dev/null
+      key=$(sed -nE 's/^GYM_OCI_HOST_KEY (ssh-ed25519 [A-Za-z0-9+\/=]+).*/\1/p' "$tmp/console" | tail -n 1)
+    fi
+    "${oci_cmd[@]}" compute console-history delete --instance-console-history-id "$capture" --force >/dev/null
+    if [[ -n "${key:-}" ]]; then
+      printf '%s %s\n' "$ip" "$key" > "$tmp/known_hosts"
+      return 0
+    fi
+    sleep 5
+  done
+  printf 'No se pudo confirmar la clave SSH de la VM en la consola de OCI.\n' >&2
+  return 1
+}
+
 apply() {
   "${tf[@]}" apply -input=false "$tmp/gym.tfplan"
   local ip nsg runner_ip rules
   ip=$("${tf[@]}" output -raw public_ip)
   nsg=$("${tf[@]}" output -raw network_security_group_id)
+  if [[ -n "$deployment_id" ]]; then
+    printf 'VM aprovisionada en %s. Estado: %s\n\n' "$ip" "$state_key" >> "$GITHUB_STEP_SUMMARY"
+    # El dominio de producción pertenece a la VM existente.
+    export SITE_DOMAIN=''
+    pin_new_host "$ip" "$("${tf[@]}" output -raw instance_ocid)"
+  fi
   runner_ip=$(curl -4 -fsS --max-time 15 https://api.ipify.org)
   python -c 'import ipaddress,sys; assert ipaddress.IPv4Address(sys.argv[1]).is_global' "$runner_ip"
   printf '%s\n' "$nsg" > "$tmp/nsg"

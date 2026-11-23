@@ -80,14 +80,18 @@ En la red nueva, el grupo de seguridad autoriza HTTP y HTTPS. El acceso SSH se r
 
 ### Workflow de GitHub Actions
 
-El workflow `.github/workflows/pipeline.yml` ejecuta Cypress en cada push a `dev` y `main`. Solo `main` publica la imagen del commit en Docker Hub, aplica Terraform y despliega con Ansible. El botón **Run workflow** usa el mismo flujo para la rama seleccionada y aparecerá cuando el archivo esté en la rama predeterminada.
+El workflow `.github/workflows/tests-dev.yml` ejecuta las pruebas unitarias, de integración y E2E de Cypress cada vez que hay un push a `dev`. El workflow `.github/workflows/pipeline.yml` publica la imagen en Docker Hub y actualiza la VM de producción con Terraform y Ansible cada vez que hay un push a `main`.
+
+Cuando el archivo esté en `main`, abre **Actions → Despliegue del gimnasio en OCI → Run workflow**, elige `main` y lanza la ejecución. Terraform crea una VM Ubuntu 24.04, su red, subredes e IP pública. Ansible configura Docker, Git, el firewall y VNC, y levanta el gimnasio con Docker Compose. El resumen de la ejecución muestra la URL por IP después de verificar la aplicación.
+
+Cada ejecución manual usa el estado `gym-portfolio/manual/<run-id>.tfstate` en el mismo bucket. Volver a ejecutar un intento desde **Re-run jobs** reutiliza ese estado. Lanzar otro **Run workflow** crea otra VM y consume capacidad adicional en OCI. La cuenta de OCI del workflow necesita permisos para capturar, leer y eliminar el historial de la consola serial, que se usa para verificar la identidad SSH de la VM nueva.
 
 Antes de habilitar el despliegue en `main`:
 
 1. Crea un bucket privado con versionado en OCI Object Storage. Respalda fuera de Git el estado local. Copia `infra/oci/backend.tf.example` a `infra/oci/backend.tf` y ejecuta `terraform init -migrate-state` desde `infra/oci`. Introduce el nombre del bucket, el namespace, la región, las credenciales de OCI y la clave de objeto `gym-portfolio/production.tfstate`. Verifica con `terraform state list` que aparezca `oci_core_instance.gym`. El workflow comprueba la presencia de la VM y rechaza planes que eliminen o reemplacen recursos.
 2. Configura un entorno de GitHub llamado `production`, limitado a la rama `main`. En sus **Variables**, agrega `OCI_STATE_BUCKET`, `OCI_STATE_NAMESPACE` y, solo cuando el DNS ya apunte a la VM, `SITE_DOMAIN`.
 3. En **Secrets** de `production`, configura `DOCKERHUB_TOKEN` con permiso de escritura en `abdielperez/gympersonal`, `OCI_API_PRIVATE_KEY` y `OCI_TFVARS_JSON` con los valores de OCI e infraestructura en formato JSON. El JSON debe representar la configuración real de la VM, incluidos `admin_cidr`, `shape` y la imagen. El runner crea sus propias rutas para las llaves. Agrega también la variable `GYM_VM_SSH_PUBLIC_KEY` con el contenido de la llave pública original `gym-oci.pub`.
-4. Agrega `GYM_DEPLOY_SSH_KEY` con una llave SSH dedicada y sin contraseña para el runner, autorizada de forma persistente en Ubuntu. Para una VM existente, conserva como metadata la llave SSH original al migrar el estado. Agrega `GYM_SSH_KNOWN_HOSTS` con la entrada de host de la VM verificada previamente y `VNC_PASSWORD` con la contraseña de VNC actual.
+4. Agrega `GYM_DEPLOY_SSH_KEY` con una llave SSH dedicada y sin contraseña para el runner y `VNC_PASSWORD` con la contraseña de VNC. Terraform autoriza la llave del runner al crear una VM manual. Para los pushes a `main`, autoriza esa llave de forma persistente en Ubuntu y agrega `GYM_SSH_KNOWN_HOSTS` con la entrada de host verificada de la VM de producción.
 5. En la VM existente, habilita el puerto 22 en UFW una vez con `sudo ufw allow 22/tcp`, después de comprobar que el NSG de OCI conserva el acceso administrativo limitado a `/32`. Durante cada despliegue el runner agrega su IPv4 `/32` al NSG y el paso final elimina esa regla. Si GitHub interrumpe el trabajo antes de poder limpiarla, retira en OCI la regla identificada por el prefijo `gym-actions-`.
 
 Ansible reutiliza el directorio de despliegue y el volumen SQLite, y conserva `GYM_ADMIN_KEY` en la VM.

@@ -43,6 +43,18 @@ variable "ssh_public_key_path" {
   description = "Ruta de la clave pública SSH para el usuario ubuntu."
 }
 
+variable "deployment_id" {
+  type        = string
+  default     = null
+  description = "Identificador de la ejecución manual que crea una VM independiente."
+}
+
+variable "deploy_ssh_public_key" {
+  type        = string
+  default     = null
+  description = "Clave pública de Ansible autorizada al crear una VM desde GitHub Actions."
+}
+
 variable "shape" {
   type        = string
   description = "Forma de la VM disponible en la región y dominio elegidos."

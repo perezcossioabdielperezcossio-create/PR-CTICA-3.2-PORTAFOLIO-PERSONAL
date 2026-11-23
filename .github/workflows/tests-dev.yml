@@ -1,0 +1,26 @@
+name: Pruebas del gimnasio en dev
+
+on:
+  push:
+    branches: [dev]
+
+permissions:
+  contents: read
+
+jobs:
+  tests:
+    name: Unitarias, integración y E2E
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+          cache: npm
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - run: npm ci
+      # El script ejecuta las tres suites de Cypress.
+      - run: python scripts/run_tests.py

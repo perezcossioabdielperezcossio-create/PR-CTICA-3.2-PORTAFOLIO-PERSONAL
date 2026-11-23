@@ -1,6 +1,6 @@
 resource "oci_core_instance" "gym" {
   compartment_id      = var.compartment_ocid
-  display_name        = "gym-ubuntu-web"
+  display_name        = var.deployment_id == null ? "gym-ubuntu-web" : "gym-ubuntu-web-${var.deployment_id}"
   availability_domain = var.availability_domain
   shape               = var.shape
 
@@ -29,9 +29,17 @@ resource "oci_core_instance" "gym" {
   }
 
   # OCI instala la clave pública SSH cuando inicia Ubuntu.
-  metadata = {
-    ssh_authorized_keys = trimspace(file(pathexpand(var.ssh_public_key_path)))
-  }
+  metadata = merge({
+    ssh_authorized_keys = join("\n", compact([
+      trimspace(file(pathexpand(var.ssh_public_key_path))),
+      var.deploy_ssh_public_key,
+    ]))
+    }, var.deployment_id == null ? {} : {
+    # Publica únicamente la clave pública del servidor en su consola serial de OCI.
+    user_data = base64encode("#cloud-config\n${yamlencode({
+      runcmd = [["sh", "-c", "{ printf 'GYM_OCI_HOST_KEY '; cat /etc/ssh/ssh_host_ed25519_key.pub; } > /dev/ttyS0"]]
+    })}")
+  })
 
   lifecycle {
     precondition {
