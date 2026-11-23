@@ -1,4 +1,13 @@
 services:
+  # El enlace HTTPS temporal dirige las visitas al proxy del gimnasio.
+  tunnel:
+    image: cloudflare/cloudflared:latest
+    profiles: [demo]
+    restart: unless-stopped
+    command: tunnel --no-autoupdate --protocol http2 --url http://proxy:80
+    depends_on:
+      - proxy
+
   app:
     # APP_IMAGE permite elegir la imagen publicada para el despliegue.
     image: ${APP_IMAGE:-gym-portfolio:local}

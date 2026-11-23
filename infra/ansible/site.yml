@@ -142,12 +142,16 @@
     # La imagen de Docker Hub es pública. Compose usa el digest guardado en .env.
     - name: Descargar imágenes publicadas
       ansible.builtin.command: docker compose pull
+      environment:
+        COMPOSE_PROFILES: "{{ 'demo' if domain == '' else '' }}"
       args:
         chdir: "{{ project_directory }}"
       changed_when: false
 
     - name: Levantar servicios y esperar disponibilidad
       ansible.builtin.command: docker compose up -d --no-build --wait --wait-timeout 120
+      environment:
+        COMPOSE_PROFILES: "{{ 'demo' if domain == '' else '' }}"
       args:
         chdir: "{{ project_directory }}"
       register: compose_up

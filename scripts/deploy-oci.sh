@@ -139,8 +139,19 @@ apply() {
     --ssh-common-args="-o StrictHostKeyChecking=yes -o UserKnownHostsFile=$tmp/known_hosts" \
     infra/ansible/site.yml
 
-  local url="http://$ip"
-  if [[ -n "${SITE_DOMAIN:-}" ]]; then url="https://$SITE_DOMAIN"; fi
+  local url="https://${SITE_DOMAIN:-}"
+  if [[ -z "${SITE_DOMAIN:-}" ]]; then
+    # Cloudflare anuncia la URL asignada en el registro del contenedor.
+    for attempt in {1..15}; do
+      local logs
+      logs=$(ssh -o BatchMode=yes -o StrictHostKeyChecking=yes -o "UserKnownHostsFile=$tmp/known_hosts" \
+        -i "$tmp/ssh" "ubuntu@$ip" "cd '$GYM_PROJECT_DIR' && sudo docker compose --profile demo logs --tail 150 tunnel")
+      url=$(grep -Eo 'https://[a-z0-9-]+\.trycloudflare\.com' <<< "$logs" | tail -1 || true)
+      [[ -n "$url" ]] && break
+      sleep 2
+    done
+    [[ -n "$url" ]] || { echo 'Cloudflare todavía no publicó la URL del túnel.' >&2; return 1; }
+  fi
   curl -fsS --max-time 10 --retry 12 --retry-delay 5 --retry-all-errors "$url/api/health" |
     jq -e '.status == "ok"' >/dev/null
   printf 'Gimnasio desplegado en %s\n' "$url" >> "$GITHUB_STEP_SUMMARY"
